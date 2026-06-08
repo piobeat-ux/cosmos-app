@@ -2,7 +2,6 @@ import { useState, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import { Upload, X } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { validateFileType, validateFileSize } from '@/lib/utils'
 
 interface FileUploadProps {
   bucket: 'images' | 'audio'
@@ -24,13 +23,17 @@ export default function FileUpload({
     const file = e.target.files?.[0]
     if (!file) return
 
-    if (!validateFileType(file, allowedTypes)) {
-      toast.error(`Недопустимый тип файла. Разрешены: ${allowedTypes.join(', ')}`)
+    // Проверка типа файла
+    const fileType = file.type
+    if (!allowedTypes.includes(fileType)) {
+      toast.error(`Недопустимый тип файла: ${fileType}. Разрешены: ${allowedTypes.join(', ')}`)
       return
     }
 
-    if (!validateFileSize(file, maxSizeMB)) {
-      toast.error(`Файл слишком большой. Максимальный размер: ${maxSizeMB} MB`)
+    // Проверка размера
+    const maxSizeBytes = maxSizeMB * 1024 * 1024
+    if (file.size > maxSizeBytes) {
+      toast.error(`Файл слишком большой: ${(file.size / 1024 / 1024).toFixed(2)} MB. Макс: ${maxSizeMB} MB`)
       return
     }
 
@@ -39,21 +42,32 @@ export default function FileUpload({
       const fileExt = file.name.split('.').pop()
       const fileName = `${folder}/${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`
 
-      const { error: uploadError } = await supabase.storage
+      console.log('Загрузка файла:', fileName, 'в бакет:', bucket)
+
+      const { data: uploadData, error: uploadError } = await supabase.storage
         .from(bucket)
         .upload(fileName, file, {
           cacheControl: '3600',
           upsert: false
         })
 
-      if (uploadError) throw uploadError
+      if (uploadError) {
+        console.error('Ошибка загрузки:', uploadError)
+        throw uploadError
+      }
 
-      const { data } = supabase.storage.from(bucket).getPublicUrl(fileName)
+      // Получаем публичный URL
+      const { data: urlData } = supabase.storage
+        .from(bucket)
+        .getPublicUrl(fileName)
+
+      console.log('Публичный URL:', urlData.publicUrl)
       
-      onChange(data.publicUrl)
+      onChange(urlData.publicUrl)
       toast.success('Файл успешно загружен!')
     } catch (error: any) {
-      toast.error(error.message || 'Ошибка загрузки файла')
+      console.error('Полная ошибка:', error)
+      toast.error(`Ошибка: ${error.message || 'Не удалось загрузить файл'}`)
     } finally {
       setUploading(false)
       if (fileInputRef.current) {
@@ -102,7 +116,7 @@ export default function FileUpload({
           {uploading ? (
             <div className="flex flex-col items-center gap-2">
               <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-500" />
-              <span className="text-sm text-gray-400">Загрузка...</span>
+              <span className="text-sm text-gray-400">Загрузка... (может занять время)</span>
             </div>
           ) : (
             <div className="flex flex-col items-center gap-2">
