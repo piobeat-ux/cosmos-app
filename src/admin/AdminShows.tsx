@@ -10,6 +10,8 @@ export default function AdminShows() {
   const queryClient = useQueryClient()
   const [editingShow, setEditingShow] = useState<Show | null>(null)
   const [isFormOpen, setIsFormOpen] = useState(false)
+  const [imageUrl, setImageUrl] = useState('')
+  const [audioUrl, setAudioUrl] = useState('')
 
   const { data: shows = [], isLoading } = useQuery({
     queryKey: ['admin-shows'],
@@ -36,6 +38,8 @@ export default function AdminShows() {
       toast.success('Шоу сохранено')
       setIsFormOpen(false)
       setEditingShow(null)
+      setImageUrl('')
+      setAudioUrl('')
     },
     onError: (error: any) => toast.error(error.message),
   })
@@ -65,11 +69,18 @@ export default function AdminShows() {
       category: formData.get('category') as string,
       order_index: parseInt(formData.get('order_index') as string) || 0,
       is_active: formData.get('is_active') === 'on',
-      image_url: formData.get('image_url') as string,
-      audio_url: formData.get('audio_url') as string,
+      image_url: imageUrl || editingShow?.image_url || '',
+      audio_url: audioUrl || editingShow?.audio_url || '',
     }
     if (editingShow) data.id = editingShow.id
     saveMutation.mutate(data)
+  }
+
+  const openEdit = (show: Show) => {
+    setEditingShow(show)
+    setImageUrl(show.image_url || '')
+    setAudioUrl(show.audio_url || '')
+    setIsFormOpen(true)
   }
 
   if (isLoading) return <div className="text-gray-400">Загрузка...</div>
@@ -78,7 +89,7 @@ export default function AdminShows() {
     <div>
       <div className="flex justify-between items-center mb-8">
         <h1 className="text-3xl font-bold">Управление шоу</h1>
-        <button onClick={() => { setEditingShow(null); setIsFormOpen(true) }} className="btn-primary flex items-center gap-2">
+        <button onClick={() => { setEditingShow(null); setImageUrl(''); setAudioUrl(''); setIsFormOpen(true) }} className="btn-primary flex items-center gap-2">
           <Plus size={20} /> Добавить шоу
         </button>
       </div>
@@ -127,15 +138,22 @@ export default function AdminShows() {
               bucket="images"
               folder="shows"
               label="Обложка шоу"
-              value={editingShow?.image_url || ''}
-              onChange={(url) => { /* Хак для FormData: создаем скрытый input или используем состояние */ }}
-              // Примечание: для простоты в этом примере мы используем управляемый state для URL
-              // В реальном проекте лучше использовать react-hook-form с Controller
+              value={imageUrl}
+              onChange={setImageUrl}
               allowedTypes={['image/jpeg', 'image/png', 'image/webp']}
               maxSizeMB={5}
             />
-            {/* Для краткости: предположим, что URL сохраняется в скрытое поле или через useState */}
-            
+
+            <FileUpload
+              bucket="audio"
+              folder="shows"
+              label="Аудио файл"
+              value={audioUrl}
+              onChange={setAudioUrl}
+              allowedTypes={['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/ogg']}
+              maxSizeMB={100}
+            />
+
             <div className="flex items-center gap-4 pt-4 border-t border-white/10">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" name="is_active" defaultChecked={editingShow?.is_active ?? true} className="w-5 h-5 rounded border-white/20 bg-white/5 text-primary-600 focus:ring-primary-500" />
@@ -165,7 +183,7 @@ export default function AdminShows() {
               <span className={`px-3 py-1 rounded-full text-xs ${show.is_active ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'}`}>
                 {show.is_active ? 'Активно' : 'Скрыто'}
               </span>
-              <button onClick={() => { setEditingShow(show); setIsFormOpen(true) }} className="p-2 text-blue-400 hover:bg-blue-500/10 rounded-lg">
+              <button onClick={() => openEdit(show)} className="p-2 text-blue-400 hover:bg-blue-500/10 rounded-lg">
                 <Edit2 size={18} />
               </button>
               <button onClick={() => { if(confirm('Удалить?')) deleteMutation.mutate(show.id) }} className="p-2 text-red-400 hover:bg-red-500/10 rounded-lg">
