@@ -1,138 +1,120 @@
-import { useState, useRef } from 'react'
-import { supabase } from '@/lib/supabase'
-import { Upload, X, Link } from 'lucide-react'
-import toast from 'react-hot-toast'
+import { useState } from 'react'
+import { supabase } from '../lib/supabase'
 
 interface FileUploadProps {
   bucket: 'images' | 'audio'
-  folder: string
-  value?: string
-  onChange: (url: string) => void
-  allowedTypes: string[]
-  maxSizeMB: number
-  label: string
+  onUpload: (url: string) => void
+  accept?: string
+  maxSize?: number // в байтах
 }
 
-export default function FileUpload({ 
-  bucket, folder, value, onChange, allowedTypes, maxSizeMB, label 
-}: FileUploadProps) {
+export default function FileUpload({ bucket, onUpload, accept, maxSize }: FileUploadProps) {
   const [uploading, setUploading] = useState(false)
-  const [manualUrl, setManualUrl] = useState(value || '')
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [progress, setProgress] = useState(0)
+  const [error, setError] = useState<string | null>(null)
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
-    const fileType = file.type
-    if (!allowedTypes.includes(fileType)) {
-      toast.error(`Недопустимый тип файла: ${fileType}`)
-      return
-    }
-
-    const maxSizeBytes = maxSizeMB * 1024 * 1024
-    if (file.size > maxSizeBytes) {
-      toast.error(`Файл слишком большой: ${(file.size / 1024 / 1024).toFixed(2)} MB. Макс: ${maxSizeMB} MB`)
-      return
-    }
-
+    setError(null)
     setUploading(true)
-    try {
-      const fileExt = file.name.split('.').pop()
-      const fileName = `${folder}/${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`
+    setProgress(0)
 
-      const { error: uploadError } = await supabase.storage
+    try {
+      // Проверка размера файла
+      if (maxSize && file.size > maxSize) {
+        throw new Error(`Файл слишком большой. Максимум: ${(maxSize / 1024 / 1024).toFixed(1)} MB`)
+      }
+
+      // Проверка существования бакета
+      const { data: buckets, error: bucketsError } = await supabase.storage.listBuckets()
+      if (bucketsError) throw bucketsError
+      
+      const bucketExists = buckets?.some(b => b.name === bucket)
+      if (!bucketExists) {
+        throw new Error(`Бакет "${bucket}" не существует. Создайте его в Supabase Dashboard.`)
+      }
+
+      // Генерируем уникальное имя файла
+      const fileExt = file.name.split('.').pop()
+      const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`
+      const filePath = `${fileName}`
+
+      // Загрузка файла
+      const { data, error: uploadError } = await supabase.storage
         .from(bucket)
-        .upload(fileName, file, {
+        .upload(filePath, file, {
           cacheControl: '3600',
-          upsert: false
+          upsert: false,
         })
 
       if (uploadError) throw uploadError
 
-      const { data } = supabase.storage.from(bucket).getPublicUrl(fileName)
-      
-      onChange(data.publicUrl)
-      setManualUrl(data.publicUrl)
-      toast.success('Файл загружен!')
-    } catch (error: any) {
-      toast.error(`Ошибка: ${error.message}`)
+      // Получаем публичный URL
+      const { data: { publicUrl } } = supabase.storage
+        .from(bucket)
+        .getPublicUrl(data.path)
+
+      setProgress(100)
+      onUpload(publicUrl)
+    } catch (err: any) {
+      console.error('Upload error:', err)
+      setError(err.message || 'Ошибка загрузки файла')
     } finally {
       setUploading(false)
-      if (fileInputRef.current) fileInputRef.current.value = ''
     }
   }
 
-  const handleManualUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const url = e.target.value
-    setManualUrl(url)
-    onChange(url)
-  }
+  const defaultAccept = bucket === 'images' 
+    ? 'image/jpeg,image/png,image/webp,image/gif'
+    : 'audio/mpeg,audio/mp3,audio/wav,audio/ogg'
+
+  const defaultMaxSize = bucket === 'images' ? 5 * 1024 * 1024 : 200 * 1024 * 1024
 
   return (
-    <div className="space-y-3">
-      <label className="block text-sm font-medium text-gray-300">{label}</label>
-      
-      {/* Ручной ввод URL */}
-      <div className="flex gap-2">
+    <div className="space-y-2">
+      <label className="block">
+        <span className="sr-only">Выберите файл</span>
         <input
-          type="url"
-          value={manualUrl}
-          onChange={handleManualUrlChange}
-          placeholder="Или вставьте URL файла..."
-          className="input-field flex-1"
+          type="file"
+          accept={accept || defaultAccept}
+          onChange={handleFileChange}
+          disabled={uploading}
+          className="block w-full text-sm text-gray-400
+            file:mr-4 file:py-2 file:px-4
+            file:rounded-full file:border-0
+            file:text-sm file:font-semibold
+            file:bg-purple-600 file:text-white
+            hover:file:bg-purple-700
+            disabled:opacity-50 disabled:cursor-not-allowed"
         />
-        <Link className="w-5 h-5 text-gray-400 mt-3" />
-      </div>
+      </label>
 
-      {/* Загрузка файла */}
-      {value ? (
-        <div className="flex items-center gap-4 glass-card p-3">
-          {bucket === 'images' ? (
-            <img src={value} alt="Preview" className="w-16 h-16 object-cover rounded-lg" />
-          ) : (
-            <div className="w-16 h-16 flex items-center justify-center bg-primary-500/20 rounded-lg">
-              <span className="text-xs text-primary-400">AUDIO</span>
-            </div>
-          )}
-          <div className="flex-1 min-w-0">
-            <p className="text-sm text-gray-400 truncate">{value.split('/').pop()}</p>
+      {uploading && (
+        <div className="space-y-1">
+          <div className="flex justify-between text-sm text-gray-400">
+            <span>Загрузка...</span>
+            <span>{progress}%</span>
           </div>
-          <button
-            type="button"
-            onClick={() => { onChange(''); setManualUrl('') }}
-            className="p-2 text-red-400 hover:bg-red-500/10 rounded-lg"
-          >
-            <X size={20} />
-          </button>
-        </div>
-      ) : (
-        <div 
-          onClick={() => fileInputRef.current?.click()}
-          className={`border-2 border-dashed border-white/10 rounded-lg p-4 text-center cursor-pointer hover:border-primary-500/50 hover:bg-white/5 transition-all ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept={allowedTypes.join(',')}
-            onChange={handleFileChange}
-            className="hidden"
-            disabled={uploading}
-          />
-          {uploading ? (
-            <div className="flex flex-col items-center gap-2">
-              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary-500" />
-              <span className="text-sm text-gray-400">Загрузка...</span>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center gap-2">
-              <Upload className="w-6 h-6 text-gray-400" />
-              <span className="text-sm text-gray-400">Или нажмите для загрузки</span>
-              <span className="text-xs text-gray-500">Макс. {maxSizeMB} MB</span>
-            </div>
-          )}
+          <div className="w-full bg-gray-700 rounded-full h-2">
+            <div
+              className="bg-purple-600 h-2 rounded-full transition-all duration-300"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
         </div>
       )}
+
+      {error && (
+        <div className="text-red-400 text-sm bg-red-900/20 p-3 rounded">
+          ❌ {error}
+        </div>
+      )}
+
+      <p className="text-xs text-gray-500">
+        Максимальный размер: {((maxSize || defaultMaxSize) / 1024 / 1024).toFixed(0)} MB
+      </p>
     </div>
   )
 }

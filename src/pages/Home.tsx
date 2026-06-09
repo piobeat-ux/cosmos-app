@@ -1,13 +1,23 @@
-import Header from '@/components/Header'
-import Footer from '@/components/Footer'
-import AudioPlayer from '@/components/AudioPlayer'
 import { useQuery } from '@tanstack/react-query'
-import { supabase } from '@/lib/supabase'
-import { Show, Banner } from '@/types'
-import { Play } from 'lucide-react'
+import { supabase } from '../lib/supabase'
+import AudioPlayer from '../components/AudioPlayer'
+import type { Show, Banner } from '../types'
 
 export default function Home() {
-  const { data: banners = [], isLoading: bannersLoading } = useQuery({
+  const { data: shows } = useQuery({
+    queryKey: ['shows'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('shows')
+        .select('*, host:hosts(*)')
+        .eq('is_active', true)
+      
+      if (error) throw error
+      return data as Show[]
+    },
+  })
+
+  const { data: banners } = useQuery({
     queryKey: ['banners'],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -15,139 +25,134 @@ export default function Home() {
         .select('*')
         .eq('is_active', true)
         .order('order_index')
-        .limit(5)
-      if (error) {
-        console.error('Error loading banners:', error)
-        throw error
-      }
+      
+      if (error) throw error
       return data as Banner[]
     },
-    staleTime: 5 * 60 * 1000, // 5 минут
-    retry: 2,
   })
 
-  const { data: shows = [], isLoading: showsLoading } = useQuery({
-    queryKey: ['shows'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('shows')
-        .select('*')
-        .eq('is_active', true)
-        .order('order_index')
-        .limit(10)
-      if (error) {
-        console.error('Error loading shows:', error)
-        throw error
-      }
-      return data as Show[]
-    },
-    staleTime: 5 * 60 * 1000,
-    retry: 2,
-  })
+  // Умное определение текущего шоу
+  const getCurrentShow = (shows: Show[]): Show | undefined => {
+    if (!shows || shows.length === 0) return undefined
+    
+    const now = new Date()
+    const dayMap: Record<string, string> = {
+      '0': 'sun', '1': 'mon', '2': 'tue', '3': 'wed',
+      '4': 'thu', '5': 'fri', '6': 'sat'
+    }
+    const currentDay = dayMap[now.getDay()]
+    const currentTime = now.getHours() * 100 + now.getMinutes()
 
-  const currentShow = shows.find(show => show.audio_url)
+    // Ищем шоу по расписанию
+    const currentShow = shows.find(show => {
+      if (!show.schedule?.days || !show.schedule?.time) return false
+      
+      const daysMatch = show.schedule.days.includes(currentDay)
+      if (!daysMatch) return false
 
-  if (bannersLoading || showsLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-500 mx-auto mb-4"></div>
-          <p className="text-gray-400">Загрузка...</p>
-        </div>
-      </div>
-    )
+      const [startTime, endTime] = show.schedule.time.split('-').map(t => {
+        const [h, m] = t.split(':').map(Number)
+        return h * 100 + m
+      })
+
+      return currentTime >= startTime && currentTime <= endTime
+    })
+
+    // Fallback: первое шоу с аудио
+    return currentShow || shows.find(show => show.audio_url || show.stream_url)
   }
 
+  const currentShow = getCurrentShow(shows || [])
+
   return (
-    <div className="min-h-screen">
-      <Header />
-      <main className="pt-20">
-        <section className="relative h-[600px] flex items-center justify-center overflow-hidden">
-          {banners[0] && (
-            <>
-              <img
-                src={banners[0].image_url}
-                alt={banners[0].title || 'Banner'}
-                className="absolute inset-0 w-full h-full object-cover"
-              />
-              <div className="absolute inset-0 bg-gradient-to-b from-dark-950/50 via-dark-950/70 to-dark-950" />
-            </>
-          )}
-          <div className="relative z-10 text-center px-4 fade-in">
-            <h1 className="text-5xl md:text-7xl font-bold mb-6">
-              {banners[0]?.title || 'Cosmos Radio'}
-            </h1>
-            <p className="text-xl md:text-2xl text-gray-300 mb-8 max-w-2xl mx-auto">
-              {banners[0]?.subtitle || 'Ваша любимая музыка 24/7'}
-            </p>
-            {banners[0]?.link_url && banners[0]?.button_text && (
-              <a href={banners[0].link_url} className="btn-primary inline-flex items-center gap-2">
-                <Play size={20} />
-                {banners[0].button_text}
+    <div className="container mx-auto px-4 py-8">
+      {/* Баннеры */}
+      {banners && banners.length > 0 && (
+        <div className="mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {banners.map((banner) => (
+              <a
+                key={banner.id}
+                href={banner.link_url || '#'}
+                target={banner.link_url ? '_blank' : undefined}
+                rel="noopener noreferrer"
+                className="block"
+              >
+                <img
+                  src={banner.image_url}
+                  alt={banner.title}
+                  className="w-full h-48 object-cover rounded-lg hover:opacity-90 transition-opacity"
+                  loading="lazy"
+                />
               </a>
-            )}
-          </div>
-        </section>
-
-        {currentShow && (
-          <section className="container-custom py-16">
-            <div className="max-w-3xl mx-auto">
-              <h2 className="text-3xl font-bold mb-8 text-center">
-                <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary-400 to-primary-600">
-                  Сейчас в эфире
-                </span>
-              </h2>
-              <AudioPlayer
-                src={currentShow.audio_url!}
-                title={currentShow.title}
-                subtitle={`${currentShow.days || ''} ${currentShow.time || ''}`.trim()}
-              />
-            </div>
-          </section>
-        )}
-
-        <section className="container-custom py-16">
-          <h2 className="section-title">
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary-400 to-primary-600">
-              Наши шоу
-            </span>
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {shows.map((show) => (
-              <div key={show.id} className="glass-card overflow-hidden group">
-                {show.image_url && (
-                  <div className="relative h-48 overflow-hidden">
-                    <img
-                      src={show.image_url}
-                      alt={show.title}
-                      className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
-                      loading="lazy"
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-dark-950 to-transparent opacity-60" />
-                  </div>
-                )}
-                <div className="p-6">
-                  <h3 className="text-xl font-bold mb-2">{show.title}</h3>
-                  {show.description && (
-                    <p className="text-gray-400 mb-4 line-clamp-2">{show.description}</p>
-                  )}
-                  <div className="flex items-center justify-between text-sm">
-                    {show.time && (
-                      <div className="text-primary-400 font-medium">
-                        {show.days} • {show.time}
-                      </div>
-                    )}
-                    {show.host_name && (
-                      <div className="text-gray-400">{show.host_name}</div>
-                    )}
-                  </div>
-                </div>
-              </div>
             ))}
           </div>
-        </section>
-      </main>
-      <Footer />
+        </div>
+      )}
+
+      {/* Текущее шоу */}
+      {currentShow && (
+        <div className="mb-8">
+          <h2 className="text-2xl font-bold mb-4">Сейчас в эфире</h2>
+          <div className="bg-gray-800 rounded-lg p-6">
+            <div className="flex items-center gap-4 mb-4">
+              {currentShow.image_url && (
+                <img
+                  src={currentShow.image_url}
+                  alt={currentShow.title}
+                  className="w-24 h-24 rounded-lg object-cover"
+                  loading="lazy"
+                />
+              )}
+              <div>
+                <h3 className="text-xl font-semibold">{currentShow.title}</h3>
+                {currentShow.host && (
+                  <p className="text-gray-400">с {currentShow.host.name}</p>
+                )}
+                {currentShow.description && (
+                  <p className="text-gray-300 mt-2">{currentShow.description}</p>
+                )}
+              </div>
+            </div>
+            <AudioPlayer
+              src={currentShow.stream_url || currentShow.audio_url || ''}
+              title={currentShow.title}
+              artist={currentShow.host?.name}
+              autoPlay={false}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Все шоу */}
+      <div>
+        <h2 className="text-2xl font-bold mb-4">Все шоу</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {shows?.map((show) => (
+            <div key={show.id} className="bg-gray-800 rounded-lg overflow-hidden">
+              {show.image_url && (
+                <img
+                  src={show.image_url}
+                  alt={show.title}
+                  className="w-full h-48 object-cover"
+                  loading="lazy"
+                />
+              )}
+              <div className="p-4">
+                <h3 className="text-lg font-semibold mb-2">{show.title}</h3>
+                {show.description && (
+                  <p className="text-gray-400 text-sm mb-2">{show.description}</p>
+                )}
+                {show.schedule?.time && (
+                  <p className="text-purple-400 text-sm">
+                    📅 {show.schedule.days?.join(', ')} {show.schedule.time}
+                  </p>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   )
 }
